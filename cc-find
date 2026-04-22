@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+import os, sys, json, re, subprocess, shutil
+
+VERSION       = "1.0.0"
+REPO          = "Dengxianyu/cc-find"
+DEFAULT_LIMIT = 20
+SNIPPET_CTX   = 60
+
+C_RESET  = '\033[0m'
+C_BOLD   = '\033[1m'
+C_DIM    = '\033[2m'
+C_RED    = '\033[91m'
+C_BLUE   = '\033[94m'
+C_GREEN  = '\033[92m'
+C_YELLOW = '\033[93m'
+
+def tw():
+    return shutil.get_terminal_size((120, 40)).columns
+
+def home_rel(path):
+    home = os.path.expanduser("~")
+    return ("~" + path[len(home):]) if path.startswith(home) else path
+
+def fmt_cwd(cwd, max_len=50):
+    cwd = home_rel(cwd)
+    if len(cwd) <= max_len:
+        return cwd
+    parts = cwd.split('/')
+    if len(parts) >= 3:
+        c = parts[0] + '/.../' + parts[-1]
+        if len(c) <= max_len:
+            return c
+    return '...' + cwd[-(max_len - 3):]
+
+def center_trunc(text, max_len, term):
+    if len(text) <= max_len:
+        return text
+    idx = text.lower().find(term.lower())
+    if idx < 0:
+        return text[:max_len - 3] + '...'
+    side   = max(0, (max_len - len(term) - 6) // 2)
+    start  = max(0, idx - side)
+    end    = min(len(text), idx + len(term) + side)
+    result = text[start:end]
+    if start > 0: result = '...' + result
+    if end < len(text): result = result + '...'
+    return result
+
+def hl(text, term):
+    return re.sub(f"({re.escape(term)})", f"{C_RED}{C_BOLD}\\1{C_RESET}", text,
+                  flags=re.IGNORECASE)
+
+def print_results(results, search_term, total_found, limit):
+    showing = len(results)
+    width   = tw()
+
+    # Header
+    count_str = f"{C_BOLD}Found {total_found} session(s){C_RESET}"
+    if total_found > showing:
+        count_str += f"  {C_DIM}showing {showing} most recent · --all / --limit N{C_RESET}"
+    count_str += f"  {C_DIM}·  search: \"{search_term}\"{C_RESET}"
+    print(f"\n{count_str}\n")
+
+    snippet_w = width - 5  # "  ↳ " prefix
+
+    for sid, data in results.items():
+        # Line 1: session ID · time · directory
+        cwd = fmt_cwd(data['cwd'])
+        print(f"  {C_BLUE}{sid}{C_RESET}  "
+              f"{C_GREEN}{data['time']}{C_RESET}  "
+              f"{C_YELLOW}{cwd}{C_RESET}")
+
+        # Line 2: snippet (indented, keyword highlighted)
+        snip = center_trunc(data['snippet'], snippet_w, search_term)
+        print(f"  {C_DIM}↳{C_RESET}  {hl(snip, search_term)}")
+        print()
+
+def extract_content(data):
+    if "content" in data and isinstance(data["content"], str):
+        return data["content"]
+    msg = data.get("message")
+    if isinstance(msg, dict):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            return " ".join([c.get("text", "") for c in content
+                             if isinstance(c, dict) and "text" in c])
+        if isinstance(content, str):
+            return content
+    return ""
+
+def find_files(term, claude_dir):
+    try:
+        r = subprocess.run(
+            ['grep', '-ril', '--include=*.jsonl', term, claude_dir],
+            capture_output=True, text=True, timeout=60
+        )
+        return [f.strip() for f in r.stdout.strip().split('\n') if f.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        files = []
+        for root, _, fs in os.walk(claude_dir):
+            for f in fs:
+                if f.endswith('.jsonl'):
+                    files.append(os.path.join(root, f))
+        return files
+
+def self_update():
+    target = shutil.which('cc-find') or '/usr/local/bin/cc-find'
+    url    = f"https://raw.githubusercontent.com/{REPO}/main/cc-find"
+    print(f"Updating cc-find ({target}) ...")
+    ret = os.system(f'sudo curl -fsSL "{url}" -o "{target}" && sudo chmod +x "{target}"')
+    if ret == 0:
+        print("Updated successfully. Run `cc-find --version` to confirm.")
+    else:
+        print("Update failed. Try running the install command manually:")
+        print(f'  sudo curl -fsSL "{url}" -o "{target}" && sudo chmod +x "{target}"')
+    sys.exit(0 if ret == 0 else 1)
+
+def main():
+    args     = sys.argv[1:]
+
+    if '--version' in args:
+        print(f"cc-find {VERSION}")
+        sys.exit(0)
+
+    if '--update' in args:
+        self_update()
+
+    show_all = '--all' in args
+    args     = [a for a in args if a != '--all']
+    limit    = DEFAULT_LIMIT
+
+    if '--limit' in args:
+        idx = args.index('--limit')
+        try:
+            limit = int(args[idx + 1])
+            args  = args[:idx] + args[idx + 2:]
+        except (ValueError, IndexError):
+            print("Usage: cc-find <keyword> [--all] [--limit N] [--update] [--version]")
+            sys.exit(1)
+
+    if not args:
+        print("Usage: cc-find <keyword> [--all] [--limit N] [--update] [--version]")
+        sys.exit(1)
+
+    term       = args[0]
+    claude_dir = os.path.expanduser("~/.claude")
+
+    if not os.path.exists(claude_dir):
+        print("~/.claude not found.")
+        sys.exit(1)
+
+    sys.stderr.write("Searching...\r")
+    sys.stderr.flush()
+
+    files = find_files(term, claude_dir)
+    if not files:
+        sys.stderr.write("             \r")
+        print(f"No results for '{term}'.")
+        return
+
+    results = {}
+    for fp in files:
+        fsid = os.path.splitext(os.path.basename(fp))[0]
+        try:
+            with open(fp, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if term.lower() not in line.lower():
+                        continue
+                    try:
+                        data    = json.loads(line)
+                        content = extract_content(data)
+                        if not content or term.lower() not in content.lower():
+                            continue
+                        sid = data.get("sessionId") or data.get("session_id") or fsid
+                        idx = content.lower().find(term.lower())
+                        snip = content[
+                            max(0, idx - SNIPPET_CTX):
+                            min(len(content), idx + len(term) + SNIPPET_CTX)
+                        ].replace('\n', ' ').strip()
+                        ts  = data.get("timestamp") or "Unknown"
+                        if isinstance(ts, str) and "T" in ts:
+                            ts = ts.split(".")[0].replace("T", " ")
+                        cwd = str(data.get("cwd") or "Unknown")
+                        if sid not in results or str(ts) > results[sid]["time"]:
+                            results[sid] = {"time": str(ts), "cwd": cwd, "snippet": snip}
+                    except json.JSONDecodeError:
+                        continue
+        except Exception:
+            pass
+
+    sys.stderr.write("             \r")
+
+    if not results:
+        print(f"No results for '{term}'.")
+        return
+
+    sorted_r = dict(sorted(results.items(), key=lambda x: x[1]['time'], reverse=True))
+    total    = len(sorted_r)
+    cap      = total if show_all else limit
+    display  = dict(list(sorted_r.items())[:cap])
+    print_results(display, term, total, limit)
+
+if __name__ == "__main__":
+    main()
