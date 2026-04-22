@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os, sys, json, re, subprocess, shutil
 
-VERSION       = "1.3.0"
+VERSION       = "1.4.0"
 REPO          = "darian-deng/cc-find"
 DEFAULT_LIMIT = 20
 SNIPPET_CTX   = 60
@@ -13,6 +13,8 @@ C_RED    = '\033[91m'
 C_BLUE   = '\033[94m'
 C_GREEN  = '\033[92m'
 C_YELLOW = '\033[93m'
+C_CYAN   = '\033[96m'
+C_ORANGE = '\033[38;5;214m'
 
 def tw():
     return shutil.get_terminal_size((120, 40)).columns
@@ -79,6 +81,14 @@ def load_history_index(claude_dir):
         pass
     return index
 
+def is_compacted(jsonl_path):
+    """Return True if this session has been auto-compacted by Claude Code."""
+    session_dir = jsonl_path[:-len('.jsonl')]  # strip .jsonl → session dir
+    subagents   = os.path.join(session_dir, 'subagents')
+    if not os.path.isdir(subagents):
+        return False
+    return any(f.startswith('agent-acompact-') for f in os.listdir(subagents))
+
 def print_results(results, search_term, total_found, limit, history_index):
     showing   = len(results)
     width     = tw()
@@ -102,12 +112,22 @@ def print_results(results, search_term, total_found, limit, history_index):
         for snip in selected:
             print(f"  {C_DIM}↳{C_RESET}  {hl(center_trunc(snip, snippet_w, search_term), search_term)}")
 
-        project = history_index.get(sid)
-        if project and os.path.normpath(project) != os.path.normpath(cwd_now):
+        # Compact warning
+        jsonl_path = data.get('path', '')
+        if jsonl_path and is_compacted(jsonl_path):
+            print(f"  {C_ORANGE}⚠ 此 session 已被 Claude 自动压缩，resume 后可能看不到匹配内容{C_RESET}")
+            grep_path = home_rel(jsonl_path)
+            print(f"  {C_DIM}  原文仍在 JSONL：grep -a '{search_term}' \"{grep_path}\"{C_RESET}")
+
+        # Resume command
+        project     = history_index.get(sid)
+        needs_cd    = project and os.path.normpath(project) != os.path.normpath(cwd_now)
+        if needs_cd:
             proj_display = home_rel(project)
-            print(f"  {C_DIM}▶ cd {proj_display} && claude --resume {sid}{C_RESET}")
+            print(f"  {C_BOLD}{C_YELLOW}▶ cd {proj_display}{C_RESET}")
+            print(f"    {C_BOLD}{C_CYAN}claude --resume {sid}{C_RESET}")
         else:
-            print(f"  {C_DIM}▶ claude --resume {sid}{C_RESET}")
+            print(f"  {C_DIM}▶{C_RESET} {C_BOLD}{C_CYAN}claude --resume {sid}{C_RESET}")
         print()
 
 def extract_content(data):
@@ -253,8 +273,12 @@ def main():
                         if isinstance(ts, str) and "T" in ts:
                             ts = ts.split(".")[0].replace("T", " ")
                         cwd = str(data.get("cwd") or "Unknown")
+                        # Always store the main session JSONL path (not subagent path)
+                        main_path = (os.path.join(project_root, parent_sid + '.jsonl')
+                                     if parent_sid else fp)
                         if sid not in results:
-                            results[sid] = {"time": str(ts), "cwd": cwd, "matches": [snip]}
+                            results[sid] = {"time": str(ts), "cwd": cwd,
+                                            "matches": [snip], "path": main_path}
                         else:
                             results[sid]["matches"].append(snip)
                             if str(ts) > results[sid]["time"]:
