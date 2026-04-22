@@ -161,6 +161,16 @@ def main():
     results = {}
     for fp in files:
         fsid = os.path.splitext(os.path.basename(fp))[0]
+        # If file is inside a subagents/ dir, map to the resumable parent session ID
+        parts = fp.replace(os.sep, '/').split('/')
+        parent_sid = None
+        if 'subagents' in parts:
+            idx          = parts.index('subagents')
+            parent_sid   = parts[idx - 1]
+            project_root = '/'.join(parts[:idx - 1])
+            # Skip if parent session has no JSONL file (not resumable)
+            if not os.path.isfile(os.path.join(project_root, parent_sid + '.jsonl')):
+                continue
         try:
             with open(fp, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -171,7 +181,7 @@ def main():
                         content = extract_content(data)
                         if not content or term.lower() not in content.lower():
                             continue
-                        sid = data.get("sessionId") or data.get("session_id") or fsid
+                        sid = parent_sid or data.get("sessionId") or data.get("session_id") or fsid
                         idx = content.lower().find(term.lower())
                         snip = content[
                             max(0, idx - SNIPPET_CTX):
