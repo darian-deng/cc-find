@@ -2,7 +2,7 @@
 import os, sys, json, re, subprocess, shutil
 
 VERSION       = "1.0.0"
-REPO          = "Dengxianyu/cc-find"
+REPO          = "darian-deng/cc-find"
 DEFAULT_LIMIT = 20
 SNIPPET_CTX   = 60
 

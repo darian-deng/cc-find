@@ -7,7 +7,7 @@ A lightweight CLI tool to globally search your [Claude Code](https://claude.ai/c
 ## Install
 
 ```bash
-sudo curl -fsSL "https://raw.githubusercontent.com/Dengxianyu/cc-find/main/cc-find" \
+sudo curl -fsSL "https://raw.githubusercontent.com/darian-deng/cc-find/main/cc-find" \
   -o /usr/local/bin/cc-find && sudo chmod +x /usr/local/bin/cc-find
 ```
 
@@ -61,7 +61,7 @@ claude --resume <session-id>
 ## 安装
 
 ```bash
-sudo curl -fsSL "https://raw.githubusercontent.com/Dengxianyu/cc-find/main/cc-find" \
+sudo curl -fsSL "https://raw.githubusercontent.com/darian-deng/cc-find/main/cc-find" \
   -o /usr/local/bin/cc-find && sudo chmod +x /usr/local/bin/cc-find
 ```
 
