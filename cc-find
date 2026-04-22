@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os, sys, json, re, subprocess, shutil
 
-VERSION       = "1.0.1"
+VERSION       = "1.1.0"
 REPO          = "darian-deng/cc-find"
 DEFAULT_LIMIT = 20
 SNIPPET_CTX   = 60
@@ -50,29 +50,35 @@ def hl(text, term):
     return re.sub(f"({re.escape(term)})", f"{C_RED}{C_BOLD}\\1{C_RESET}", text,
                   flags=re.IGNORECASE)
 
-def print_results(results, search_term, total_found, limit):
-    showing = len(results)
-    width   = tw()
+def pick_indices(n, max_count=3):
+    """Pick up to max_count indices spread across front/middle/back."""
+    if n <= max_count:
+        return list(range(n))
+    first, last = 0, n - 1
+    mid = (first + last) // 2
+    return sorted({first, mid, last})
 
-    # Header
+def print_results(results, search_term, total_found, limit):
+    showing   = len(results)
+    width     = tw()
+    snippet_w = width - 5  # "  ↳ " prefix
+
     count_str = f"{C_BOLD}Found {total_found} session(s){C_RESET}"
     if total_found > showing:
         count_str += f"  {C_DIM}showing {showing} most recent · --all / --limit N{C_RESET}"
     count_str += f"  {C_DIM}·  search: \"{search_term}\"{C_RESET}"
     print(f"\n{count_str}\n")
 
-    snippet_w = width - 5  # "  ↳ " prefix
-
     for sid, data in results.items():
-        # Line 1: session ID · time · directory
         cwd = fmt_cwd(data['cwd'])
         print(f"  {C_BLUE}{sid}{C_RESET}  "
               f"{C_GREEN}{data['time']}{C_RESET}  "
               f"{C_YELLOW}{cwd}{C_RESET}")
 
-        # Line 2: snippet (indented, keyword highlighted)
-        snip = center_trunc(data['snippet'], snippet_w, search_term)
-        print(f"  {C_DIM}↳{C_RESET}  {hl(snip, search_term)}")
+        matches  = data['matches']
+        selected = [matches[i] for i in pick_indices(len(matches))]
+        for snip in selected:
+            print(f"  {C_DIM}↳{C_RESET}  {hl(center_trunc(snip, snippet_w, search_term), search_term)}")
         print()
 
 def extract_content(data):
@@ -199,8 +205,13 @@ def main():
                         if isinstance(ts, str) and "T" in ts:
                             ts = ts.split(".")[0].replace("T", " ")
                         cwd = str(data.get("cwd") or "Unknown")
-                        if sid not in results or str(ts) > results[sid]["time"]:
-                            results[sid] = {"time": str(ts), "cwd": cwd, "snippet": snip}
+                        if sid not in results:
+                            results[sid] = {"time": str(ts), "cwd": cwd, "matches": [snip]}
+                        else:
+                            results[sid]["matches"].append(snip)
+                            if str(ts) > results[sid]["time"]:
+                                results[sid]["time"] = str(ts)
+                                results[sid]["cwd"]  = cwd
                     except json.JSONDecodeError:
                         continue
         except Exception:
