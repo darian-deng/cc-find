@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os, sys, json, re, subprocess, shutil
 
-VERSION       = "1.1.0"
+VERSION       = "1.2.0"
 REPO          = "darian-deng/cc-find"
 DEFAULT_LIMIT = 20
 SNIPPET_CTX   = 60
@@ -85,13 +85,28 @@ def extract_content(data):
     if "content" in data and isinstance(data["content"], str):
         return data["content"]
     msg = data.get("message")
-    if isinstance(msg, dict):
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            return " ".join([c.get("text", "") for c in content
-                             if isinstance(c, dict) and "text" in c])
-        if isinstance(content, str):
-            return content
+    if not isinstance(msg, dict):
+        return ""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type", "")
+            if btype == "text":
+                parts.append(block.get("text", ""))
+            elif btype == "tool_result":
+                inner = block.get("content", "")
+                if isinstance(inner, str):
+                    parts.append(inner)
+                elif isinstance(inner, list):
+                    for ib in inner:
+                        if isinstance(ib, dict) and ib.get("type") == "text":
+                            parts.append(ib.get("text", ""))
+        return " ".join(parts)
     return ""
 
 def find_files(term, claude_dir):
